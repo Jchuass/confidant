@@ -1,0 +1,13 @@
+{
+  "name": "confidant",
+  "version": "1.0.0",
+  "description": "Confidant — an AI counselling companion (Ms Ilona)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
