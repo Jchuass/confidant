@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Confidant — a caring space to talk</title>
+<style>
+  :root {
+    --bg: #f6f3ee;
+    --panel: #ffffff;
+    --ink: #3d3833;
+    --ink-soft: #8a827a;
+    --accent: #7c9a83;
+    --accent-deep: #5f7d66;
+    --user-bubble: #dfe9e1;
+    --ilona-bubble: #ffffff;
+    --line: #e8e2d9;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    background: var(--bg);
+    color: var(--ink);
+    height: 100dvh;
+    display: flex;
+    justify-content: center;
+  }
+  .app {
+    width: 100%;
+    max-width: 720px;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 16px 24px 12px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header img.avatar { width: 40px; height: 40px; }
+  header .titles h1 { font-size: 20px; font-weight: normal; font-style: italic; color: var(--accent-deep); }
+  header .titles .tag { font-size: 12px; color: var(--ink-soft); font-family: system-ui, sans-serif; }
+  header button {
+    margin-left: auto;
+    font-family: system-ui, sans-serif;
+    font-size: 12px;
+    color: var(--ink-soft);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  header button:hover { color: var(--ink); border-color: var(--ink-soft); }
+
+  .disclaimer {
+    font-family: system-ui, sans-serif;
+    font-size: 12px;
+    color: var(--ink-soft);
+    background: #efe9df;
+    padding: 8px 24px;
+    line-height: 1.5;
+  }
+
+  .crisis {
+    display: none;
+    font-family: system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    background: #fbeee9;
+    border-left: 4px solid #c96f52;
+    color: #6e3a29;
+    padding: 12px 24px;
+  }
+  .crisis.show { display: block; }
+  .crisis a { color: #a4512f; }
+
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .avatar {
+    border-radius: 50%;
+    object-fit: cover;
+    background: #efe6d8;
+    flex-shrink: 0;
+  }
+
+  .row { display: flex; gap: 8px; align-items: flex-end; animation: msg-in 200ms ease-out; }
+  .row .avatar { width: 36px; height: 36px; }
+
+  .msg {
+    max-width: 82%;
+    padding: 12px 16px;
+    border-radius: 16px;
+    line-height: 1.55;
+    font-size: 16px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--user-bubble);
+    border-bottom-right-radius: 4px;
+    animation: msg-in 200ms ease-out;
+  }
+  .msg.ilona {
+    background: var(--ilona-bubble);
+    border: 1px solid var(--line);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.ilona .who {
+    display: block;
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    margin-bottom: 4px;
+  }
+  @keyframes msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .typing { color: var(--ink-soft); font-style: italic; }
+  .typing::after { content: "…"; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "…"; } }
+
+  form {
+    display: flex;
+    gap: 8px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+  }
+  textarea {
+    flex: 1;
+    resize: none;
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1.4;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 12px 16px;
+    max-height: 128px;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  form button {
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 16px;
+    padding: 0 24px;
+    cursor: pointer;
+    min-height: 44px;
+  }
+  form button:hover { background: var(--accent-deep); }
+  form button:disabled { opacity: 0.5; cursor: default; }
+
+  /* ---- animated welcome ---- */
+  .intro {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: opacity 320ms ease-in-out;
+  }
+  .intro.hide { opacity: 0; pointer-events: none; }
+  .intro .portrait {
+    width: 144px;
+    height: 144px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid #fff;
+    box-shadow: 0 8px 32px rgba(95, 125, 102, 0.25);
+    animation:
+      portrait-in 600ms ease-out both,
+      hello 1100ms ease-in-out 750ms;
+  }
+  @keyframes hello {
+    0%   { transform: scale(1) rotate(0deg); box-shadow: 0 8px 32px rgba(95, 125, 102, 0.25); }
+    35%  { transform: scale(1.05) rotate(-2deg); box-shadow: 0 10px 44px rgba(95, 125, 102, 0.42); }
+    65%  { transform: scale(1.05) rotate(2deg); box-shadow: 0 10px 44px rgba(95, 125, 102, 0.42); }
+    100% { transform: scale(1) rotate(0deg); box-shadow: 0 8px 32px rgba(95, 125, 102, 0.25); }
+  }
+  .intro h2 {
+    font-size: 24px;
+    font-weight: normal;
+    font-style: italic;
+    color: var(--accent-deep);
+    margin-top: 8px;
+    animation: fade-up 480ms ease-out 280ms both;
+  }
+  .intro p {
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    color: var(--ink-soft);
+    animation: fade-up 480ms ease-out 420ms both;
+  }
+  .intro .hint {
+    font-size: 12px;
+    margin-top: 16px;
+    animation: fade-up 480ms ease-out 900ms both;
+  }
+  @keyframes portrait-in {
+    from { opacity: 0; transform: scale(0.85) translateY(12px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .row, .msg.user, .intro .portrait, .intro h2, .intro p, .intro .hint { animation: none !important; }
+    .intro { transition: none; }
+    .typing::after { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="intro" id="intro">
+  <img class="portrait" src="ilona.png" alt="Ms Ilona" onerror="this.onerror=null;this.src='ilona.svg'">
+  <h2>Ms Ilona</h2>
+  <p>your confidant &middot; here to listen</p>
+  <p class="hint">tap anywhere to begin</p>
+</div>
+
+<div class="app">
+  <header>
+    <img class="avatar" src="ilona.png" alt="" onerror="this.onerror=null;this.src='ilona.svg'">
+    <div class="titles">
+      <h1>Confidant</h1>
+      <div class="tag">with Ms Ilona</div>
+    </div>
+    <button id="reset" type="button">New conversation</button>
+  </header>
+
+  <div class="disclaimer">
+    Ms Ilona is an AI companion for supportive conversation — not a licensed therapist,
+    and not a substitute for professional care.
+  </div>
+
+  <div class="crisis" id="crisis">
+    <strong>You deserve support from a real person, right now.</strong><br>
+    If you are in danger or thinking about harming yourself, please call your local
+    emergency number, or a crisis line such as <strong>988</strong> (US) — or find a
+    helpline in your country at <a href="https://www.befrienders.org" target="_blank" rel="noopener">befrienders.org</a>.
+  </div>
+
+  <main id="chat"></main>
+
+  <form id="form">
+    <textarea id="input" rows="1" placeholder="What's on your mind?" autofocus></textarea>
+    <button id="send" type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+  const chat = document.getElementById("chat");
+  const form = document.getElementById("form");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const crisisBanner = document.getElementById("crisis");
+  const intro = document.getElementById("intro");
+
+  // per-browser session id so the server can keep our conversation history
+  let sessionId = localStorage.getItem("confidant-session");
+  if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    localStorage.setItem("confidant-session", sessionId);
+  }
+
+  function addMessage(role, text) {
+    if (role === "ilona") {
+      const row = document.createElement("div");
+      row.className = "row";
+      const avatar = document.createElement("img");
+      avatar.className = "avatar";
+      avatar.src = "ilona.png";
+      avatar.alt = "";
+      avatar.onerror = () => { avatar.onerror = null; avatar.src = "ilona.svg"; };
+      const div = document.createElement("div");
+      div.className = "msg ilona";
+      const who = document.createElement("span");
+      who.className = "who";
+      who.textContent = "Ms Ilona";
+      div.appendChild(who);
+      const body = document.createElement("span");
+      body.textContent = text;
+      div.appendChild(body);
+      row.appendChild(avatar);
+      row.appendChild(div);
+      row._body = body;
+      chat.appendChild(row);
+      chat.scrollTop = chat.scrollHeight;
+      return row;
+    }
+    const div = document.createElement("div");
+    div.className = "msg user";
+    div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  function greet() {
+    addMessage("ilona", "Hello, I'm Ms Ilona. I'm glad you came — this is a space just for you, with no judgment and no rush. What's on your mind today?");
+  }
+
+  // ---- animated welcome: show once per visit, then reveal the chat ----
+  let introDone = false;
+  function dismissIntro() {
+    if (introDone) return;
+    introDone = true;
+    intro.classList.add("hide");
+    setTimeout(() => intro.remove(), 350);
+    greet();
+    input.focus();
+  }
+  intro.addEventListener("click", dismissIntro);
+  setTimeout(dismissIntro, 2800);
+
+  async function send(message) {
+    addMessage("user", message);
+    sendBtn.disabled = true;
+    input.value = "";
+    input.style.height = "auto";
+
+    const bubble = addMessage("ilona", "");
+    bubble._body.classList.add("typing");
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, message }),
+      });
+
+      if (res.headers.get("X-Crisis") === "1") crisisBanner.classList.add("show");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        bubble._body.classList.remove("typing");
+        bubble._body.textContent = text;
+        chat.scrollTop = chat.scrollHeight;
+      }
+      if (!text) bubble._body.textContent = "(no reply — check the server logs)";
+    } catch (err) {
+      bubble._body.textContent = "Connection problem — is the server running?";
+    } finally {
+      bubble._body.classList.remove("typing");
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const message = input.value.trim();
+    if (message && !sendBtn.disabled) send(message);
+  });
+
+  // Enter sends, Shift+Enter makes a new line
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 128) + "px";
+  });
+
+  document.getElementById("reset").addEventListener("click", async () => {
+    await fetch("/api/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+    chat.innerHTML = "";
+    crisisBanner.classList.remove("show");
+    greet();
+    input.focus();
+  });
+</script>
+</body>
+</html>
