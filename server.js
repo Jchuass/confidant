@@ -1,10 +1,11 @@
-// Confidant — AI counsellor prototype server (zero dependencies, Node 18+)
+// Confidant — AI counsellor prototype server (Node 18+)
 // Run: node server.js   then open http://localhost:3000
 
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDbEnabled, loadHistory, saveMessage, clearSession } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,6 +21,7 @@ if (fs.existsSync(envPath)) {
 const PORT = process.env.PORT || 3000;
 const PROVIDER = process.env.PROVIDER || "gemini";
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, "system-prompt.txt"), "utf8");
+const MAX_TURNS = 200; // cap history length sent to the AI
 
 // --- provider fallback chain: try each "brain" in order until one answers ---
 const KEY_VAR = {
@@ -42,9 +44,26 @@ async function loadProviders() {
 
 const providers = await loadProviders();
 
-// --- in-memory conversation store (prototype only; swap for a database later) ---
-const sessions = new Map(); // sessionId -> [{role, text}]
-const MAX_TURNS = 200;
+// --- conversation storage: Supabase if configured, else in-memory (prototype) ---
+const memSessions = new Map(); // sessionId -> [{role, text}]
+
+async function getHistory(sessionId) {
+  if (isDbEnabled()) return await loadHistory(sessionId);
+  return (memSessions.get(sessionId) || []).slice();
+}
+
+async function addMessage(sessionId, role, text) {
+  if (isDbEnabled()) return await saveMessage(sessionId, role, text);
+  if (!memSessions.has(sessionId)) memSessions.set(sessionId, []);
+  const arr = memSessions.get(sessionId);
+  arr.push({ role, text });
+  while (arr.length > MAX_TURNS) arr.shift();
+}
+
+async function resetSession(sessionId) {
+  if (isDbEnabled()) return await clearSession(sessionId);
+  memSessions.delete(sessionId);
+}
 
 // --- crisis keyword check (belt-and-suspenders alongside the system prompt) ---
 const CRISIS_PATTERNS = [
@@ -65,6 +84,22 @@ function hasApiKey() {
 }
 
 const server = http.createServer(async (req, res) => {
+  // GET /api/history?sessionId=... -> past messages so the page can restore them
+  if (req.method === "GET" && req.url.startsWith("/api/history")) {
+    const sessionId = new URL(req.url, `http://localhost`).searchParams.get("sessionId");
+    let messages = [];
+    if (sessionId) {
+      try {
+        messages = await getHistory(sessionId);
+      } catch (err) {
+        console.error("[history load]", err.message);
+      }
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+    res.end(JSON.stringify(messages));
+    return;
+  }
+
   // POST /api/chat  { sessionId, message } -> streamed plain-text reply
   if (req.method === "POST" && req.url === "/api/chat") {
     let raw = "";
@@ -80,10 +115,23 @@ const server = http.createServer(async (req, res) => {
     }
     message = message.trim().slice(0, 4000);
 
-    if (!sessions.has(sessionId)) sessions.set(sessionId, []);
-    const history = sessions.get(sessionId);
+    // Load prior turns, then build the history we send to the AI.
+    let history;
+    try {
+      history = await getHistory(sessionId);
+    } catch (err) {
+      console.error("[history load]", err.message);
+      history = [];
+    }
     history.push({ role: "user", text: message });
-    while (history.length > MAX_TURNS) history.shift();
+    const forAI = history.slice(-MAX_TURNS);
+
+    // Save the user's message right away so nothing is lost.
+    try {
+      await addMessage(sessionId, "user", message);
+    } catch (err) {
+      console.error("[save user]", err.message);
+    }
 
     res.writeHead(200, {
       "Content-Type": "text/plain; charset=utf-8",
@@ -92,8 +140,8 @@ const server = http.createServer(async (req, res) => {
     });
 
     if (!hasApiKey()) {
-      history.push({ role: "assistant", text: DEMO_REPLY });
       res.end(DEMO_REPLY);
+      try { await addMessage(sessionId, "assistant", DEMO_REPLY); } catch {}
       return;
     }
 
@@ -101,7 +149,7 @@ const server = http.createServer(async (req, res) => {
     let answered = false;
     for (const provider of providers) {
       try {
-        for await (const text of provider.streamReply({ system: SYSTEM_PROMPT, history })) {
+        for await (const text of provider.streamReply({ system: SYSTEM_PROMPT, history: forAI })) {
           reply += text;
           res.write(text);
         }
@@ -117,16 +165,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (answered) {
-      history.push({ role: "assistant", text: reply });
-    } else {
-      history.pop(); // don't keep the unanswered user turn
-      if (!reply) {
-        res.write(
-          "I'm so sorry — I'm having a little trouble connecting right now. " +
-          "It's not you, and nothing you wrote was lost on my end. " +
-          "Give it a few seconds and send your message again?"
-        );
+      try {
+        await addMessage(sessionId, "assistant", reply);
+      } catch (err) {
+        console.error("[save assistant]", err.message);
       }
+    } else if (!reply) {
+      res.write(
+        "I'm so sorry — I'm having a little trouble connecting right now. " +
+        "It's not you, and nothing you wrote was lost on my end. " +
+        "Give it a few seconds and send your message again?"
+      );
     }
     res.end();
     return;
@@ -138,8 +187,10 @@ const server = http.createServer(async (req, res) => {
     for await (const chunk of req) raw += chunk;
     try {
       const { sessionId } = JSON.parse(raw);
-      sessions.delete(sessionId);
-    } catch {}
+      if (sessionId) await resetSession(sessionId);
+    } catch (err) {
+      console.error("[reset]", err.message);
+    }
     res.writeHead(204).end();
     return;
   }
@@ -171,6 +222,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Confidant running at http://localhost:${PORT}`);
+  console.log(`Storage: ${isDbEnabled() ? "Supabase (persistent)" : "in-memory (resets on restart)"}`);
   if (providers.length) {
     console.log(`Brains (in fallback order): ${providers.map((p) => p.name).join(" -> ")}`);
   } else {

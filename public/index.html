@@ -327,6 +327,23 @@
     addMessage("ilona", "Hello, I'm Ms Ilona. I'm glad you came — this is a space just for you, with no judgment and no rush. What's on your mind today?");
   }
 
+  // Restore a returning visitor's past conversation; greet a new one.
+  async function loadHistory() {
+    try {
+      const res = await fetch(`/api/history?sessionId=${encodeURIComponent(sessionId)}`);
+      const msgs = await res.json();
+      if (Array.isArray(msgs) && msgs.length) {
+        for (const m of msgs) {
+          addMessage(m.role === "assistant" ? "ilona" : "user", m.text);
+        }
+        return;
+      }
+    } catch {
+      /* fall through to greeting */
+    }
+    greet();
+  }
+
   // ---- animated welcome: show once per visit, then reveal the chat ----
   let introDone = false;
   function dismissIntro() {
@@ -334,7 +351,7 @@
     introDone = true;
     intro.classList.add("hide");
     setTimeout(() => intro.remove(), 350);
-    greet();
+    loadHistory();
     input.focus();
   }
   intro.addEventListener("click", dismissIntro);
