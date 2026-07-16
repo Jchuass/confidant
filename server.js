@@ -254,6 +254,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- Auth: start "Continue with Google" (redirect to Supabase → Google) ---
+  if (req.method === "GET" && req.url === "/api/oauth/google") {
+    if (!authEnabled()) { res.writeHead(302, { Location: "/" }); return res.end(); }
+    const proto = req.headers["x-forwarded-proto"] || "http";
+    const origin = `${proto}://${req.headers.host}`;
+    const target = `${SUPA_URL()}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(origin)}`;
+    res.writeHead(302, { Location: target });
+    res.end();
+    return;
+  }
+
+  // --- Auth: establish a cookie session from OAuth tokens (from the URL hash) ---
+  if (req.method === "POST" && req.url === "/api/session") {
+    let access_token, refresh_token;
+    try { ({ access_token, refresh_token } = await readJson(req)); } catch { res.writeHead(400).end("Bad request"); return; }
+    // Verify the token is genuine by asking Supabase who it belongs to.
+    let user = null;
+    if (access_token) {
+      try {
+        const r = await fetch(`${SUPA_URL()}/auth/v1/user`, {
+          headers: { apikey: SUPA_ANON(), Authorization: `Bearer ${access_token}` },
+        });
+        if (r.ok) user = await r.json();
+      } catch {}
+    }
+    let body;
+    if (user && user.id) { setSessionCookies(res, { access_token, refresh_token }); body = { ok: true, email: user.email }; }
+    else body = { error: "Could not verify sign-in. Please try again." };
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(body));
+    return;
+  }
+
   // --- Auth: log out ---
   if (req.method === "POST" && req.url === "/api/logout") {
     clearSessionCookies(res);
