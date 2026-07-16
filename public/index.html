@@ -2,8 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Confidant — a caring space to talk</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#7c9a83">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Confidant">
 <style>
   :root {
     --bg: #f6f3ee;
@@ -498,6 +504,13 @@
     setMode("login");
     emailInput.focus();
   })();
+
+  // Register the service worker so the app is installable and loads fast.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    });
+  }
 </script>
 </body>
 </html>

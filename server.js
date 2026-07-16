@@ -360,6 +360,7 @@ const server = http.createServer(async (req, res) => {
   const types = {
     ".html": "text/html", ".css": "text/css", ".js": "text/javascript",
     ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webmanifest": "application/manifest+json", ".json": "application/json",
   };
   fs.readFile(filePath, (err, data) => {
     if (err) {
