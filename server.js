@@ -96,6 +96,7 @@ async function supaUpdateUser(accessToken, body) {
 function friendlyAuthError(data) {
   const raw = data.error_description || data.msg || data.message || data.error || "";
   if (/already registered/i.test(raw)) return "There's already an account with that email — try logging in instead.";
+  if (/not confirmed|confirm your email/i.test(raw)) return "Please confirm your email first — check your inbox (and spam) for the confirmation link.";
   if (/invalid login|invalid grant|credentials/i.test(raw)) return "That email or password doesn't match. Please try again.";
   if (/password.*(6|characters|short)/i.test(raw)) return "Password must be at least 6 characters.";
   if (/email.*invalid|valid email/i.test(raw)) return "Please enter a valid email address.";
