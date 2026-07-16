@@ -5,7 +5,10 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDbEnabled, loadHistory, saveMessage, clearSession } from "./db.js";
+import {
+  isDbEnabled, loadHistory, saveMessage,
+  listConversations, createConversation, getConversation, updateConversation, deleteConversation,
+} from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,25 +51,13 @@ async function loadProviders() {
 
 const providers = await loadProviders();
 
-// --- conversation storage: Supabase if configured, else in-memory (prototype) ---
-const memSessions = new Map(); // userId -> [{role, text}]
+// Storage is Supabase-backed (reaching chat requires being logged in, which
+// requires Supabase Auth — so the database is always configured here).
 
-async function getHistory(userId) {
-  if (isDbEnabled()) return await loadHistory(userId);
-  return (memSessions.get(userId) || []).slice();
-}
-
-async function addMessage(userId, role, text) {
-  if (isDbEnabled()) return await saveMessage(userId, role, text);
-  if (!memSessions.has(userId)) memSessions.set(userId, []);
-  const arr = memSessions.get(userId);
-  arr.push({ role, text });
-  while (arr.length > MAX_TURNS) arr.shift();
-}
-
-async function resetSession(userId) {
-  if (isDbEnabled()) return await clearSession(userId);
-  memSessions.delete(userId);
+// Turn the first user message into a short conversation title.
+function titleFrom(message) {
+  const clean = message.replace(/\s+/g, " ").trim();
+  return clean.length > 40 ? clean.slice(0, 40) + "…" : clean || "New conversation";
 }
 
 // ---------------------------------------------------------------------------
@@ -302,35 +293,93 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- History (requires login) ---
+  // --- List this user's conversations ---
+  if (req.method === "GET" && req.url === "/api/conversations") {
+    const user = await getUser(req, res);
+    if (!user) { res.writeHead(401, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "not logged in" })); }
+    let convs = [];
+    try { convs = await listConversations(user.id); } catch (err) { console.error("[conversations list]", err.message); }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+    res.end(JSON.stringify(convs));
+    return;
+  }
+
+  // --- Create a new conversation ---
+  if (req.method === "POST" && req.url === "/api/conversations") {
+    const user = await getUser(req, res);
+    if (!user) { res.writeHead(401).end(); return; }
+    let conv = null;
+    try { conv = await createConversation(user.id, null); } catch (err) { console.error("[conversation create]", err.message); }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(conv ? { id: conv.id, title: conv.title } : { error: "Could not create conversation." }));
+    return;
+  }
+
+  // --- Rename a conversation ---
+  if (req.method === "POST" && req.url === "/api/conversations/rename") {
+    const user = await getUser(req, res);
+    if (!user) { res.writeHead(401).end(); return; }
+    let id, title;
+    try { ({ id, title } = await readJson(req)); } catch { res.writeHead(400).end("Bad request"); return; }
+    title = (typeof title === "string" ? title.trim().slice(0, 80) : "") || "Untitled";
+    try { await updateConversation(user.id, id, { title }); } catch (err) { console.error("[conversation rename]", err.message); }
+    res.writeHead(204).end();
+    return;
+  }
+
+  // --- Delete a conversation (and its messages) ---
+  if (req.method === "POST" && req.url === "/api/conversations/delete") {
+    const user = await getUser(req, res);
+    if (!user) { res.writeHead(401).end(); return; }
+    let id;
+    try { ({ id } = await readJson(req)); } catch { res.writeHead(400).end("Bad request"); return; }
+    try { await deleteConversation(user.id, id); } catch (err) { console.error("[conversation delete]", err.message); }
+    res.writeHead(204).end();
+    return;
+  }
+
+  // --- History for one conversation (requires login) ---
   if (req.method === "GET" && req.url.startsWith("/api/history")) {
     const user = await getUser(req, res);
     if (!user) { res.writeHead(401, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "not logged in" })); }
+    const convId = new URL(req.url, "http://localhost").searchParams.get("conversationId");
     let messages = [];
-    try { messages = await getHistory(user.id); } catch (err) { console.error("[history load]", err.message); }
+    try { if (convId) messages = await loadHistory(user.id, convId); } catch (err) { console.error("[history load]", err.message); }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
     res.end(JSON.stringify(messages));
     return;
   }
 
-  // --- Chat (requires login) ---
+  // --- Chat within a conversation (requires login) ---
   if (req.method === "POST" && req.url === "/api/chat") {
     const user = await getUser(req, res);
     if (!user) { res.writeHead(401, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "not logged in" })); }
 
-    let message;
+    let message, conversationId;
     try {
-      ({ message } = await readJson(req));
+      ({ message, conversationId } = await readJson(req));
       if (typeof message !== "string" || !message.trim()) throw new Error();
     } catch { res.writeHead(400).end("Bad request"); return; }
     message = message.trim().slice(0, 4000);
 
+    // Verify the conversation exists and belongs to this user.
+    let conv = null;
+    try { conv = await getConversation(user.id, conversationId); } catch (err) { console.error("[conversation get]", err.message); }
+    if (!conv) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "conversation not found" })); }
+
     let history;
-    try { history = await getHistory(user.id); } catch (err) { console.error("[history load]", err.message); history = []; }
+    try { history = await loadHistory(user.id, conversationId); } catch (err) { console.error("[history load]", err.message); history = []; }
+    const isFirst = history.length === 0;
     history.push({ role: "user", text: message });
     const forAI = history.slice(-MAX_TURNS);
 
-    try { await addMessage(user.id, "user", message); } catch (err) { console.error("[save user]", err.message); }
+    try { await saveMessage(user.id, conversationId, "user", message); } catch (err) { console.error("[save user]", err.message); }
+    // Bump the conversation to the top of the list, and name it from the first message.
+    try {
+      const fields = { updated_at: new Date().toISOString() };
+      if (isFirst && (!conv.title || conv.title === "New conversation")) fields.title = titleFrom(message);
+      await updateConversation(user.id, conversationId, fields);
+    } catch (err) { console.error("[conversation touch]", err.message); }
 
     res.writeHead(200, {
       "Content-Type": "text/plain; charset=utf-8",
@@ -340,7 +389,7 @@ const server = http.createServer(async (req, res) => {
 
     if (!hasApiKey()) {
       res.end(DEMO_REPLY);
-      try { await addMessage(user.id, "assistant", DEMO_REPLY); } catch {}
+      try { await saveMessage(user.id, conversationId, "assistant", DEMO_REPLY); } catch {}
       return;
     }
 
@@ -361,7 +410,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (answered) {
-      try { await addMessage(user.id, "assistant", reply); } catch (err) { console.error("[save assistant]", err.message); }
+      try { await saveMessage(user.id, conversationId, "assistant", reply); } catch (err) { console.error("[save assistant]", err.message); }
     } else if (!reply) {
       res.write(
         "I'm so sorry — I'm having a little trouble connecting right now. " +
@@ -370,15 +419,6 @@ const server = http.createServer(async (req, res) => {
       );
     }
     res.end();
-    return;
-  }
-
-  // --- Reset conversation (requires login) ---
-  if (req.method === "POST" && req.url === "/api/reset") {
-    const user = await getUser(req, res);
-    if (!user) { res.writeHead(401).end(); return; }
-    try { await resetSession(user.id); } catch (err) { console.error("[reset]", err.message); }
-    res.writeHead(204).end();
     return;
   }
 

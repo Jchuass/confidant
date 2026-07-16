@@ -52,6 +52,51 @@
     background: none; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; cursor: pointer;
   }
   header button:hover { color: var(--ink); border-color: var(--ink-soft); }
+  .icon-btn {
+    background: none; border: none; font-size: 20px; line-height: 1; color: var(--ink-soft);
+    cursor: pointer; padding: 4px 8px; border-radius: 8px;
+  }
+  .icon-btn:hover { color: var(--ink); background: rgba(0, 0, 0, 0.05); border: none; }
+
+  /* ---- conversations drawer ---- */
+  .drawer-overlay {
+    position: fixed; inset: 0; background: rgba(40, 36, 32, 0.35); z-index: 25;
+    opacity: 0; pointer-events: none; transition: opacity 220ms ease;
+  }
+  .drawer-overlay.show { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; left: 0; height: 100dvh; width: 300px; max-width: 84vw;
+    background: var(--panel); border-right: 1px solid var(--line); z-index: 26;
+    transform: translateX(-100%); transition: transform 260ms ease;
+    display: flex; flex-direction: column; box-shadow: 2px 0 24px rgba(95, 125, 102, 0.12);
+  }
+  .drawer.open { transform: translateX(0); }
+  .drawer-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    font-family: system-ui, sans-serif; font-size: 14px; color: var(--ink);
+  }
+  .new-conv {
+    margin: 12px 14px 6px; padding: 11px; font-family: system-ui, sans-serif; font-size: 14px;
+    background: var(--accent); color: #fff; border: none; border-radius: 12px; cursor: pointer;
+  }
+  .new-conv:hover { background: var(--accent-deep); }
+  .conv-list { flex: 1; overflow-y: auto; padding: 6px 10px 16px; }
+  .conv-item {
+    display: flex; align-items: center; gap: 6px; padding: 10px; border-radius: 10px; cursor: pointer;
+    font-family: system-ui, sans-serif; font-size: 14px; color: var(--ink);
+  }
+  .conv-item:hover { background: #f0ece4; }
+  .conv-item.active { background: var(--user-bubble); }
+  .conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms; }
+  .conv-item:hover .conv-actions, .conv-item.active .conv-actions { opacity: 1; }
+  .conv-actions button {
+    background: none; border: none; cursor: pointer; font-size: 13px; color: var(--ink-soft);
+    padding: 3px 5px; border-radius: 6px;
+  }
+  .conv-actions button:hover { color: var(--ink); background: rgba(0, 0, 0, 0.06); }
+  .conv-empty { font-family: system-ui, sans-serif; font-size: 13px; color: var(--ink-soft); padding: 16px; text-align: center; }
 
   .disclaimer {
     font-family: system-ui, sans-serif; font-size: 12px; color: var(--ink-soft);
@@ -245,8 +290,20 @@
   <p class="hint">tap anywhere to begin</p>
 </div>
 
+<!-- Conversations drawer -->
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <span>Your conversations</span>
+    <button id="drawerClose" class="icon-btn" type="button" aria-label="Close">✕</button>
+  </div>
+  <button class="new-conv" id="newConvBtn" type="button">+ New conversation</button>
+  <div class="conv-list" id="convList"></div>
+</aside>
+
 <div class="app">
   <header>
+    <button id="menuBtn" class="icon-btn" type="button" aria-label="Your conversations">☰</button>
     <img class="avatar" src="ilona.png" alt="" onerror="this.onerror=null;this.src='ilona.svg'">
     <div class="titles">
       <h1>Confidant</h1>
@@ -255,7 +312,6 @@
     <div class="who">
       <span class="email" id="userEmail"></span>
       <div class="actions">
-        <button id="reset" type="button">New conversation</button>
         <button id="logout" type="button">Log out</button>
       </div>
     </div>
@@ -336,19 +392,121 @@
     addMessage("ilona", "Hello, I'm Ms Ilona. I'm glad you came — this is a space just for you, with no judgment and no rush. What's on your mind today?");
   }
 
-  async function loadHistory() {
+  // ---- conversations ----
+  let currentConversationId = null;
+  let conversationsCache = [];
+  const drawer = document.getElementById("drawer");
+  const drawerOverlay = document.getElementById("drawerOverlay");
+  const convList = document.getElementById("convList");
+
+  const openDrawer = () => { drawer.classList.add("open"); drawerOverlay.classList.add("show"); };
+  const closeDrawer = () => { drawer.classList.remove("open"); drawerOverlay.classList.remove("show"); };
+
+  async function loadConversations() {
     try {
-      const res = await fetch("/api/history");
-      if (res.ok) {
-        const msgs = await res.json();
-        if (Array.isArray(msgs) && msgs.length) {
-          for (const m of msgs) addMessage(m.role === "assistant" ? "ilona" : "user", m.text);
-          return;
-        }
-      }
-    } catch { /* fall through */ }
-    greet();
+      const r = await fetch("/api/conversations");
+      if (r.ok) conversationsCache = await r.json();
+    } catch { /* keep cache */ }
+    renderConversations();
+    return conversationsCache;
   }
+
+  function renderConversations() {
+    convList.innerHTML = "";
+    if (!conversationsCache.length) {
+      const e = document.createElement("div");
+      e.className = "conv-empty";
+      e.textContent = "No conversations yet.";
+      convList.appendChild(e);
+      return;
+    }
+    for (const c of conversationsCache) {
+      const item = document.createElement("div");
+      item.className = "conv-item" + (String(c.id) === String(currentConversationId) ? " active" : "");
+      const title = document.createElement("span");
+      title.className = "conv-title";
+      title.textContent = c.title || "New conversation";
+      title.addEventListener("click", () => openConversation(c.id));
+      const actions = document.createElement("span");
+      actions.className = "conv-actions";
+      const ren = document.createElement("button");
+      ren.textContent = "✎"; ren.title = "Rename";
+      ren.addEventListener("click", (ev) => { ev.stopPropagation(); renameConv(c.id, c.title || ""); });
+      const del = document.createElement("button");
+      del.textContent = "🗑"; del.title = "Delete";
+      del.addEventListener("click", (ev) => { ev.stopPropagation(); deleteConv(c.id); });
+      actions.appendChild(ren); actions.appendChild(del);
+      item.appendChild(title); item.appendChild(actions);
+      convList.appendChild(item);
+    }
+  }
+
+  async function openConversation(id) {
+    currentConversationId = id;
+    renderConversations(); // move the active highlight
+    closeDrawer();
+    chat.innerHTML = "";
+    crisisBanner.classList.remove("show");
+    let msgs = [];
+    try {
+      const r = await fetch("/api/history?conversationId=" + encodeURIComponent(id));
+      if (r.ok) msgs = await r.json();
+    } catch { /* show greeting */ }
+    if (Array.isArray(msgs) && msgs.length) {
+      for (const m of msgs) addMessage(m.role === "assistant" ? "ilona" : "user", m.text);
+    } else {
+      greet();
+    }
+    input.focus();
+  }
+
+  async function newConversation() {
+    let conv = null;
+    try {
+      const r = await fetch("/api/conversations", { method: "POST" });
+      if (r.ok) conv = await r.json();
+    } catch { /* ignore */ }
+    if (conv && conv.id) {
+      await loadConversations();
+      await openConversation(conv.id);
+    }
+  }
+
+  async function deleteConv(id) {
+    if (!confirm("Delete this conversation? This can't be undone.")) return;
+    try {
+      await fetch("/api/conversations/delete", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }),
+      });
+    } catch { /* ignore */ }
+    await loadConversations();
+    if (String(id) === String(currentConversationId)) {
+      if (conversationsCache.length) await openConversation(conversationsCache[0].id);
+      else await newConversation();
+    }
+  }
+
+  async function renameConv(id, currentTitle) {
+    const title = prompt("Rename this conversation:", currentTitle || "");
+    if (title === null) return;
+    try {
+      await fetch("/api/conversations/rename", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, title }),
+      });
+    } catch { /* ignore */ }
+    await loadConversations();
+  }
+
+  async function initConversations() {
+    await loadConversations();
+    if (conversationsCache.length) await openConversation(conversationsCache[0].id);
+    else await newConversation();
+  }
+
+  document.getElementById("menuBtn").addEventListener("click", openDrawer);
+  document.getElementById("drawerClose").addEventListener("click", closeDrawer);
+  drawerOverlay.addEventListener("click", closeDrawer);
+  document.getElementById("newConvBtn").addEventListener("click", newConversation);
 
   // ---- auth flow ----
   const show = (el, on) => { el.style.display = on ? "" : "none"; };
@@ -447,7 +605,7 @@
       if (introDone) return;
       introDone = true;
       intro.classList.add("hide");
-      loadHistory();
+      initConversations();
       input.focus();
     };
     intro.addEventListener("click", dismiss, { once: true });
@@ -456,6 +614,14 @@
 
   // ---- chat ----
   async function send(message) {
+    // Safety: make sure a conversation exists to write into.
+    if (!currentConversationId) {
+      try {
+        const r = await fetch("/api/conversations", { method: "POST" });
+        const c = await r.json();
+        currentConversationId = c.id;
+      } catch { /* server will 400 and we recover below */ }
+    }
     addMessage("user", message);
     sendBtn.disabled = true;
     input.value = ""; input.style.height = "auto";
@@ -465,7 +631,7 @@
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, conversationId: currentConversationId }),
       });
       if (res.status === 401) {
         location.reload(); // session expired — back to login
@@ -484,6 +650,7 @@
         chat.scrollTop = chat.scrollHeight;
       }
       if (!text) bubble._body.textContent = "(no reply — please try again)";
+      loadConversations(); // refresh titles/order (first message names the chat)
     } catch {
       bubble._body.textContent = "Connection problem — please try again.";
     } finally {
@@ -506,13 +673,6 @@
     input.style.height = Math.min(input.scrollHeight, 128) + "px";
   });
 
-  document.getElementById("reset").addEventListener("click", async () => {
-    await fetch("/api/reset", { method: "POST" });
-    chat.innerHTML = "";
-    crisisBanner.classList.remove("show");
-    greet();
-    input.focus();
-  });
 
   document.getElementById("logout").addEventListener("click", async () => {
     await fetch("/api/logout", { method: "POST" });
